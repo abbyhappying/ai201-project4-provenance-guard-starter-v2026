@@ -251,8 +251,7 @@ fool both to get a confident wrong answer.
 
 ## Sample Run
 
-<!-- One submission and one appeal, pasted as text: the request, the response,
-     and the log entries. -->
+
 
 **A submission**
 
@@ -261,17 +260,49 @@ fool both to get a confident wrong answer.
      two off the response, so leaving them out costs you next unit's
      diagnostics. -->
 
+*Milestone 3 — one signal. `style_score`, `confidence` and the real label are
+placeholders until Milestones 4 and 5. The text is an AI-written paragraph.*
+
 ```bash
 $ curl -X POST http://127.0.0.1:5000/submit \
   -H "Content-Type: application/json" \
-  -d '{"text": "...", "creator_id": "..."}'
+  -d '{"text": "Remote work has transformed the modern workplace in significant ways. It offers employees greater flexibility and helps them achieve a better work-life balance. Additionally, companies can reduce overhead costs and access a wider pool of talent. However, remote work also presents challenges, such as communication barriers and feelings of isolation. Overall, organizations that adopt clear policies and invest in the right tools are well positioned to succeed.", "creator_id": "abby"}'
 ```
 
 ```json
+HTTP 200
+{
+  "confidence": null,
+  "content_id": "2203b76b-02c8-4387-a12d-8d8efc48c3fb",
+  "creator_id": "abby",
+  "guess": "ai",
+  "label": "Placeholder — the real label comes in Milestone 5.",
+  "model_score": 0.75,
+  "status": "decided",
+  "style_score": null
+}
+```
 
+**A bad input** — rejected with a `400`, not a crash, and not logged as a
+decision:
+
+```bash
+$ curl -X POST http://127.0.0.1:5000/submit \
+  -H "Content-Type: application/json" \
+  -d '{"text": "Too short to judge.", "creator_id": "abby"}'
+```
+
+```json
+HTTP 400
+{
+  "error": "invalid_input",
+  "message": "Please submit at least 20 words so there's enough to judge."
+}
 ```
 
 **An appeal**
+
+*Not built yet — `/appeal` arrives in Milestone 5.*
 
 ```bash
 $ curl -X POST http://127.0.0.1:5000/appeal \
@@ -285,12 +316,31 @@ $ curl -X POST http://127.0.0.1:5000/appeal \
 
 **What the log shows afterwards**
 
+*After the submission above. The entry carries the same `content_id` the
+response returned, and `style_score` / `combined_score` are `null` until
+Milestone 4.*
+
 ```bash
-$ curl "http://127.0.0.1:5000/log?limit=3"
+$ curl "http://127.0.0.1:5000/log?limit=1"
 ```
 
 ```json
-
+{
+  "count": 1,
+  "entries": [
+    {
+      "combined_score": null,
+      "content_id": "2203b76b-02c8-4387-a12d-8d8efc48c3fb",
+      "creator_id": "abby",
+      "guess": "ai",
+      "label": "Placeholder — the real label comes in Milestone 5.",
+      "model_score": 0.75,
+      "status": "decided",
+      "style_score": null,
+      "timestamp": "2026-11-01T18:54:51+00:00"
+    }
+  ]
+}
 ```
 
 ---
