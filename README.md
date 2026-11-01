@@ -36,10 +36,123 @@
 
 ## What This Does
 
-<!-- The path a submission takes, from arriving to the label a reader sees.
-     Six or seven steps — this is the trace you wrote in Milestone 1. -->
 
 
+Provenance Guard takes a piece of writing and tells the writer whether it
+looks human-written, AI-written, or too close to call — and gives them a way to
+appeal if it got them wrong.
+
+### The path a submission takes
+
+| # | Where | What it adds |
+|---|---|---|
+| 1 | `app.py::submit` receives `POST /submit` | Raw JSON becomes a Python dict. This is the only way in. |
+| 2 | Input check, same route | Rejects missing, empty, too-short or too-long `text` (and a missing `creator_id`) with a `400` instead of a crash. Assigns a new `content_id` (UUID). |
+| 3 | `detector.py::model_signal` | `model_score`, 0–1: how predictable the text is to GPT-2 (perplexity, squashed onto 0–1). |
+| 4 | `stylometry.py::style_signal` | `style_score`, 0–1: the shape of the text — sentence-length spread, vocabulary repetition, punctuation. |
+| 5 | `scoring.py::combine_signals` | One `combined_score`, 0–1. This is where the decision about which way to be wrong gets made. |
+| 6 | `scoring.py::score_to_label` | A `guess` (`ai` / `human` / `unsure`) and the sentence a person actually reads, chosen by the thresholds in `config.py`. |
+| 7 | `audit.py::log_decision`, then the response | A permanent line in `logs/audit.jsonl`, and a JSON response with the label, both signal scores, and the `content_id` the writer needs to appeal. |
+
+All scores point the same way: **higher means more likely AI.**
+
+### Tracing the false positive
+
+**Who:** a student writing in their second language submits an essay they
+wrote themselves. Short sentences, common words they're sure of, no semicolons
+or dashes.
+
+**What score they get:** GPT-2 finds plain, common wording easy to predict, so
+the model signal comes out high — say around 0.85. With the starter settings
+(style signal still a stub at 0.5, weights 0.5 / 0.5) the combined score is
+0.5 × 0.85 + 0.5 × 0.5 = **0.675**. That is above `AI_THRESHOLD` (0.65), so
+they are labelled **high-confidence AI**. *(Illustrative numbers from the
+starter configuration — Milestone 4 replaces them with measured ones.)*
+
+**What the label says to them:** in the starter, a placeholder. Even once it's
+written, a confident "AI" label reads as an accusation, and the writer has no
+way to tell that one signal alone pushed them over the line.
+
+**What they can do about it:** in the starter, nothing — `/appeal` returns
+`501`. Once it's built, they can appeal, but only if the response gave them
+their `content_id` and the label told them appealing is an option.
+
+**What this means for my design:**
+
+1. The "ai" label has to be hard to reach — a higher AI threshold or a wider
+   "unsure" band. That lets more AI text through in exchange for fewer real
+   writers being accused, and I'm choosing that trade on purpose.
+2. One signal shouldn't be able to convict on its own. A strong model score
+   with an ordinary style score should land in "unsure", not "ai".
+3. The style signal has to actually work. While it's stuck at 0.5, the model
+   signal decides everything — and the model signal is the one with this
+   blind spot.
+4. Every label, especially "ai", tells the writer they can appeal and gives
+   them the `content_id` to do it.
+
+### The endpoint contract
+
+Every error, on both endpoints, has the same shape:
+`{"error": "<code>", "message": "<a sentence a person can act on>"}`.
+
+#### `POST /submit`
+
+**Request**
+
+| Field | Type | Rule |
+|---|---|---|
+| `text` | string | Required. Not empty after trimming. At least a few sentences (under 3 tokens can't be scored). At most 20,000 characters. |
+| `creator_id` | string | Required, not empty. Who submitted it; also the rate-limit key in unit 8. |
+
+**Response `200`**
+
+| Field | Type | Meaning |
+|---|---|---|
+| `content_id` | string (UUID) | The handle for `/appeal`. |
+| `creator_id` | string | Echoed back. |
+| `guess` | `"ai"` \| `"human"` \| `"unsure"` | Machine-readable result. |
+| `label` | string | The sentence a person reads, including how to appeal. |
+| `confidence` | float, 0–1 | Same value as `combined_score`: **0 = confidently human, 1 = confidently AI.** It is not "how sure we are of the guess". |
+| `model_score` | float, 0–1 | Signal one. |
+| `style_score` | float, 0–1 | Signal two. |
+| `combined_score` | float, 0–1 | The number the label came from. |
+| `status` | `"decided"` | Matches the audit log. |
+
+**Errors**
+
+| Status | `error` | When |
+|---|---|---|
+| `400` | `invalid_input` | `text` missing, not a string, empty, too short or too long; or `creator_id` missing or empty. |
+| `429` | `rate_limited` | Too many submissions (unit 8). |
+| `503` | `detector_unavailable` | The local model couldn't be loaded. |
+
+#### `POST /appeal`
+
+**Request**
+
+| Field | Type | Rule |
+|---|---|---|
+| `content_id` | string | Required. Must match an earlier submission in the audit log. |
+| `reasoning` | string | Required, not empty. The writer's explanation. |
+
+**Response `200`**
+
+| Field | Type | Meaning |
+|---|---|---|
+| `content_id` | string | Echoed back. |
+| `status` | `"under_review"` | The item's new status. |
+| `message` | string | Confirmation for the writer, e.g. "Your appeal was recorded. A person will review it." |
+
+**Errors**
+
+| Status | `error` | When |
+|---|---|---|
+| `400` | `invalid_input` | `content_id` or `reasoning` missing or empty. |
+| `404` | `not_found` | No submission with that `content_id` — so a typo gets a clear answer instead of a silent success. |
+
+**Not checked (on purpose, for this unit):** whether the person appealing is
+the original `creator_id`. The appeal is recorded beside the original decision
+— never overwriting it — and a person reviews it.
 
 ---
 
@@ -53,19 +166,46 @@
 
 ### Signal one — the model signal
 
-**What it measures:**
+**What it measures:** Perplexity — how easily a local language model (GPT-2,
+in `detector.py`) predicts each next word of the text. Low perplexity means
+predictable; `model_signal` maps that onto 0–1 so that more predictable scores
+higher (more AI-like).
 
-**Why that might differ between human and AI writing:**
+**Why that might differ between human and AI writing:** A language model
+writes by repeatedly choosing a likely next word, so its output is text a model
+finds easy to predict. People make odder, more specific choices — an unusual
+word, an abrupt turn, a detail nobody would guess.
 
-**What it can't see:**
+**What it can't see:** Authorship. It rewards *plain* writing, not *machine*
+writing. Someone writing in a second language, a younger writer, or anyone
+writing simply on purpose uses common words in ordinary sentences — and scores
+about as machine-like as a machine. The reverse fails too: AI text dressed up
+with rare, ornate vocabulary scores as human, because rare words are exactly
+what the model can't predict. The writers this signal is most likely to accuse
+are the ones with the least room to argue back.
 
 ### Signal two — the style signal
 
-**What it measures:**
+**What it measures:** The shape of the text, without reading it
+(`stylometry.py`): how much sentence length varies, how much vocabulary
+repeats (type-token ratio), and how much punctuation is used and of what kind
+(semicolons and dashes vary more between writers than full stops).
 
-**Why that might differ between human and AI writing:**
+**Why that might differ between human and AI writing:** Generated prose tends
+toward even, mid-length sentences and a narrower band of vocabulary, because
+that's what "most likely next word" produces on average. Human writing is
+lumpier — a three-word sentence next to a forty-word one.
 
-**What it can't see:**
+**What it can't see:** Meaning. Anything that changes the shape without
+changing the substance moves it: splitting or merging sentences, adding typos,
+pasting in a quotation, sprinkling in semicolons. Those are cheap to do on
+purpose. It is also unreliable on short text — one sentence has no length
+spread at all, and type-token ratio falls as text gets longer, so length alone
+can look like a signal.
+
+**Why two signals:** they fail on different things. The model signal is
+fooled by word choice; the style signal is fooled by structure. An input has to
+fool both to get a confident wrong answer.
 
 ### The combining rule
 
