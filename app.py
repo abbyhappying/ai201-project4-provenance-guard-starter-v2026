@@ -199,17 +199,79 @@ def submit():
     what should this do when `text` is missing, empty, or enormous? A crash on
     a malformed input is one of the most common real failures there is.
     """
-    payload = request.get_json(silent=True) or {}
+    import detector
+    import scoring
 
-    # TODO: delete this and build the route.
+    payload = request.get_json(silent=True)
+
+    # Input checks. A bad request gets a 400 with a sentence the sender can act
+    # on — never a 500. A list or string body has no .get, so check the type
+    # before reading fields out of it.
+    if not isinstance(payload, dict):
+        return _invalid("Send a JSON object with 'text' and 'creator_id'.")
+
+    text = payload.get("text")
+    creator_id = payload.get("creator_id")
+
+    if not isinstance(text, str) or not text.strip():
+        return _invalid("'text' is required and must be a non-empty string.")
+    if len(text.split()) < MIN_WORDS:
+        return _invalid(f"Please submit at least {MIN_WORDS} words so there's enough to judge.")
+    if len(text) > MAX_CHARS:
+        return _invalid(f"Text is limited to {MAX_CHARS:,} characters.")
+    if not isinstance(creator_id, str) or not creator_id.strip():
+        return _invalid("'creator_id' is required and must be a non-empty string.")
+
+    content_id = str(uuid.uuid4())
+
+    # Milestone 3: one signal only. The style signal and the combined score
+    # arrive in Milestone 4; their keys are here now as None so the shape of
+    # the response and the log never changes.
+    try:
+        model_score = detector.model_signal(text)
+    except detector.DetectorUnavailable:
+        return jsonify({
+            "error": "detector_unavailable",
+            "message": "The detector isn't available right now. Try again shortly.",
+        }), 503
+    except ValueError as exc:
+        return _invalid(str(exc))
+
+    # Provisional guess from the one signal, using the thresholds in config.py.
+    guess, _ = scoring.score_to_label(model_score)
+    label = "Placeholder — the real label comes in Milestone 5."
+
+    audit.log_decision(
+        content_id=content_id,
+        creator_id=creator_id,
+        guess=guess,
+        model_score=model_score,
+        style_score=None,
+        combined_score=None,
+        label=label,
+        status="decided",
+    )
+
     return jsonify({
-        "error": "not_implemented",
-        "message": "POST /submit isn't built yet — see the TODO in app.py.",
-        "you_sent": {
-            "text_length": len(payload.get("text", "")),
-            "creator_id": payload.get("creator_id"),
-        },
-    }), 501
+        "content_id": content_id,
+        "creator_id": creator_id,
+        "guess": guess,
+        "confidence": None,
+        "label": label,
+        "model_score": model_score,
+        "style_score": None,
+        "status": "decided",
+    }), 200
+
+
+# Input limits — the same numbers as the README contract and criterion 5.
+MIN_WORDS = 20
+MAX_CHARS = 20_000
+
+
+def _invalid(message: str):
+    """One shape for every bad request: {"error", "message"} and a 400."""
+    return jsonify({"error": "invalid_input", "message": message}), 400
 
 
 @app.post("/appeal")
