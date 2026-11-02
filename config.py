@@ -74,6 +74,19 @@ WEIGHT_STYLE_SIGNAL = 0.5
 HUMAN_THRESHOLD = 0.35
 AI_THRESHOLD = 0.65
 
+# The agreement rule in scoring.py::combine_signals. A confident label needs
+# both signals on the same side; when they split, the score is held inside the
+# unsure band. The AI side asks for stronger agreement than the human side,
+# because a wrong accusation costs more than a missed detection.
+#
+# These sit below the thresholds on purpose: the cap and floor are worked out
+# from them, so they stay inside the unsure band if the thresholds move.
+
+AI_FLOOR = 0.6                          # "ai" only if BOTH signals are >= this
+UNSURE_CAP = AI_THRESHOLD - 0.01        # 0.64 — just inside the unsure band
+HUMAN_CEILING = 0.5                     # "human" only if BOTH signals are <= this
+HUMAN_FLOOR = HUMAN_THRESHOLD + 0.01    # 0.36 — just inside the unsure band
+
 # ⚠️ One thing that catches people out in Milestone 5. A weighted average can
 # only land between its two inputs — so while `style_signal` is still the stub
 # returning 0.5, the combined score can never leave 0.25–0.75 no matter what

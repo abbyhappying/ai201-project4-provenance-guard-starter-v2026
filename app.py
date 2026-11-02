@@ -201,6 +201,7 @@ def submit():
     """
     import detector
     import scoring
+    import stylometry
 
     payload = request.get_json(silent=True)
 
@@ -224,9 +225,7 @@ def submit():
 
     content_id = str(uuid.uuid4())
 
-    # Milestone 3: one signal only. The style signal and the combined score
-    # arrive in Milestone 4; their keys are here now as None so the shape of
-    # the response and the log never changes.
+    # Signal one: how predictable the text is to a local model.
     try:
         model_score = detector.model_signal(text)
     except detector.DetectorUnavailable:
@@ -237,17 +236,21 @@ def submit():
     except ValueError as exc:
         return _invalid(str(exc))
 
-    # Provisional guess from the one signal, using the thresholds in config.py.
-    guess, _ = scoring.score_to_label(model_score)
-    label = "Placeholder — the real label comes in Milestone 5."
+    # Signal two: the shape of the text. Then the combining rule.
+    style_score = stylometry.style_signal(text)
+    combined_score = scoring.combine_signals(model_score, style_score)
 
+    guess, label = scoring.score_to_label(combined_score, content_id)
+
+    # Both signal scores go in the log beside the combined one. Without them
+    # a surprising decision can't be traced back to the signal that caused it.
     audit.log_decision(
         content_id=content_id,
         creator_id=creator_id,
         guess=guess,
         model_score=model_score,
-        style_score=None,
-        combined_score=None,
+        style_score=style_score,
+        combined_score=combined_score,
         label=label,
         status="decided",
     )
@@ -256,10 +259,11 @@ def submit():
         "content_id": content_id,
         "creator_id": creator_id,
         "guess": guess,
-        "confidence": None,
+        "confidence": combined_score,
         "label": label,
         "model_score": model_score,
-        "style_score": None,
+        "style_score": style_score,
+        "combined_score": combined_score,
         "status": "decided",
     }), 200
 
@@ -267,6 +271,7 @@ def submit():
 # Input limits — the same numbers as the README contract and criterion 5.
 MIN_WORDS = 20
 MAX_CHARS = 20_000
+MAX_REASONING_CHARS = 5_000
 
 
 def _invalid(message: str):
@@ -277,31 +282,72 @@ def _invalid(message: str):
 @app.post("/appeal")
 def appeal():
     """
-    A writer says you got it wrong. ← TODO — Milestone 5
+    A writer says you got it wrong.
 
     Expects JSON:
         {"content_id": "...", "reasoning": "..."}
 
-    Should:
-      1. Check the content_id actually exists — `audit.entries_for(id)` tells
-         you. A typo here fails silently and looks like a broken endpoint,
-         which is the single most common way this milestone eats an hour.
-      2. Record the appeal with `audit.log_appeal(...)`, which moves the item
-         to `under_review`.
-      3. Confirm to the writer. No automatic re-checking needed.
+    Returns 200 with the new status, 400 for a malformed request, 404 when no
+    submission has that content_id.
+
+    The log is append-only, so nothing is overwritten: the original decision
+    stays exactly as it was, and the appeal is a new entry after it with
+    status `under_review`. An item's current status is its latest entry.
+
+    Appealing the same item twice is allowed — each appeal is recorded, in
+    order, so a writer can add to their reasoning.
 
     This is the smallest endpoint in the project and the one that matters most
     to the person on the other end. It's the only thing standing between a
     wrong accusation and nothing at all.
     """
-    payload = request.get_json(silent=True) or {}
+    payload = request.get_json(silent=True)
 
-    # TODO: delete this and build the route.
+    if not isinstance(payload, dict):
+        return _invalid("Send a JSON object with 'content_id' and 'reasoning'.")
+
+    content_id = payload.get("content_id")
+    reasoning = payload.get("reasoning")
+
+    if not isinstance(content_id, str) or not content_id.strip():
+        return _invalid("'content_id' is required — it's the reference number from your result.")
+    if not isinstance(reasoning, str) or not reasoning.strip():
+        return _invalid("'reasoning' is required — tell us why you think the result is wrong.")
+    if len(reasoning) > MAX_REASONING_CHARS:
+        return _invalid(f"Please keep your reasoning under {MAX_REASONING_CHARS:,} characters.")
+
+    # A reference number pasted with a stray space shouldn't look like a typo.
+    content_id = content_id.strip()
+
+    decision = next(
+        (e for e in audit.entries_for(content_id) if e.get("status") == "decided"),
+        None,
+    )
+    if decision is None:
+        return jsonify({
+            "error": "not_found",
+            "message": (
+                f"We couldn't find a submission with reference number "
+                f"{content_id}. Check it matches the one in your result."
+            ),
+        }), 404
+
+    # creator_id comes from the original decision, so the appeal is tied to
+    # the writer who submitted — the request doesn't need to send it.
+    audit.log_appeal(
+        content_id=content_id,
+        creator_id=decision["creator_id"],
+        reasoning=reasoning.strip(),
+    )
+
     return jsonify({
-        "error": "not_implemented",
-        "message": "POST /appeal isn't built yet — see the TODO in app.py.",
-        "you_sent": payload,
-    }), 501
+        "content_id": content_id,
+        "status": "under_review",
+        "message": (
+            "Your appeal was recorded. A person will review it. "
+            "The original result stays on record until then."
+        ),
+    }), 200
 
 
 # ── Already works ─────────────────────────────────────────────────────────────

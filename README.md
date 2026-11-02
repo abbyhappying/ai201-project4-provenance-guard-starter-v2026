@@ -132,8 +132,8 @@ Every error, on both endpoints, has the same shape:
 
 | Field | Type | Rule |
 |---|---|---|
-| `content_id` | string | Required. Must match an earlier submission in the audit log. |
-| `reasoning` | string | Required, not empty. The writer's explanation. |
+| `content_id` | string | Required. Must match an earlier submission in the audit log. Surrounding spaces are ignored, so a pasted reference number still works. |
+| `reasoning` | string | Required, not empty. At most 5,000 characters. The writer's explanation. |
 
 **Response `200`**
 
@@ -141,18 +141,24 @@ Every error, on both endpoints, has the same shape:
 |---|---|---|
 | `content_id` | string | Echoed back. |
 | `status` | `"under_review"` | The item's new status. |
-| `message` | string | Confirmation for the writer, e.g. "Your appeal was recorded. A person will review it." |
+| `message` | string | Confirmation for the writer: "Your appeal was recorded. A person will review it. The original result stays on record until then." |
 
 **Errors**
 
 | Status | `error` | When |
 |---|---|---|
-| `400` | `invalid_input` | `content_id` or `reasoning` missing or empty. |
+| `400` | `invalid_input` | Body isn't a JSON object; `content_id` or `reasoning` missing, empty or not a string; `reasoning` over 5,000 characters. |
 | `404` | `not_found` | No submission with that `content_id` — so a typo gets a clear answer instead of a silent success. |
 
 **Not checked (on purpose, for this unit):** whether the person appealing is
 the original `creator_id`. The appeal is recorded beside the original decision
-— never overwriting it — and a person reviews it.
+— never overwriting it — and a person reviews it. The appeal entry takes its
+`creator_id` from the original decision, not from the request.
+
+**Repeat appeals are allowed.** Appealing the same `content_id` again records
+another appeal after the first, in order, and returns `200` again — so a
+writer can add to their reasoning. The log is append-only, so nothing earlier
+is lost.
 
 ---
 
@@ -203,26 +209,133 @@ purpose. It is also unreliable on short text — one sentence has no length
 spread at all, and type-token ratio falls as text gets longer, so length alone
 can look like a signal.
 
+It also can't tell *even* from *machine-made*. Formal human prose with
+balanced, equally long sentences reads as AI: the opening of *Federalist
+No. 10* has three sentences of almost the same length (spread 0.06), so the
+style signal scored it 0.822 — more AI-like than an AI paragraph. Plain
+writing with short, steady sentences and few commas has the same problem
+(my own paragraph scored 0.552). The writers it misreads are the careful
+formal ones and the plain ones — the second group overlaps with signal one's
+blind spot, which is why the combining rule won't let "ai" rest on weak
+agreement.
+
 **Why two signals:** they fail on different things. The model signal is
 fooled by word choice; the style signal is fooled by structure. An input has to
 fool both to get a confident wrong answer.
 
 ### The combining rule
 
-<!-- Write the rule in words, then give the numbers. What happens when the two
-     signals disagree? -->
 
-**The rule:**
 
-**The numbers:**
+**The rule:** A weighted average of the two signals, plus an agreement rule:
+**a confident label needs both signals on the same side.**
+
+1. Start with the weighted average of the model score and the style score.
+2. If *either* signal is below the AI floor, the score is capped just below
+   the AI threshold — so it can be "unsure" at worst, never "ai". One signal
+   can't convict on its own.
+3. If *either* signal is above the human ceiling, the score is raised just
+   above the human threshold — so it can be "unsure" at best, never "human".
+4. When the signals split, both caps apply and the score is held inside the
+   unsure band. **Disagreement always means "unsure".**
+
+The two sides are deliberately unequal. "ai" needs both signals at 0.6 or
+more; "human" only needs both at 0.5 or less. A wrong accusation costs the
+writer far more than a missed detection costs the site, so the AI side asks
+for stronger agreement.
+
+**The numbers:** (all in `config.py`)
+
+| Setting | Value | What it does |
+|---|---|---|
+| `WEIGHT_MODEL_SIGNAL` | 0.5 | Weight of the model signal in the average |
+| `WEIGHT_STYLE_SIGNAL` | 0.5 | Weight of the style signal in the average |
+| `AI_FLOOR` | 0.6 | "ai" only if **both** signals are at or above this |
+| `UNSURE_CAP` | 0.64 (`AI_THRESHOLD − 0.01`) | Where the score is capped when the AI floor isn't met |
+| `HUMAN_CEILING` | 0.5 | "human" only if **both** signals are at or below this |
+| `HUMAN_FLOOR` | 0.36 (`HUMAN_THRESHOLD + 0.01`) | Where the score is raised when the human ceiling isn't met |
+
+Equal weights, because each signal was fooled by a different piece in testing
+(below) — neither earned more trust than the other. The cap and floor are
+worked out from the thresholds, so they stay inside the unsure band if the
+thresholds move in Milestone 5.
 
 **Where it lives:** `scoring.py::combine_signals`
 
-<!-- ⚠️ The grader checks your code against that line. If your rule lives
-     somewhere else, say where. -->
 
 **A case where my two signals split, and what my rule does with it:**
 
+Both signals on the same four test pieces:
+
+| Piece | Written by | Model | Style | Average | My rule | Guess |
+|---|---|---|---|---|---|---|
+| Remote-work paragraph | AI | 0.750 | 0.914 | 0.832 | 0.832 | ai |
+| Opening of *Walden* | Human | **0.758** | **0.009** | 0.384 | 0.384 | unsure |
+| Casual remote-work paragraph | AI, written casually | **0.445** | **0.752** | 0.599 | 0.599 | unsure |
+| Corner-store paragraph | Me | 0.659 | 0.552 | 0.605 | 0.605 | unsure |
+
+**The split: *Walden*.** The model signal scored it as AI (0.758) — perplexity
+22, the same as the AI paragraph — most likely because GPT-2 saw this famous
+passage in training, so it's predictable whoever wrote it. The style signal
+read it as clearly human (0.009): sentences of 51, 8 and 10 words and plenty
+of commas. One said AI, the other said human, and the human one was right.
+My rule sees the style signal below the AI floor, so "ai" is off the table,
+and the model signal above the human ceiling, so "human" is too: the answer is
+**unsure**. The writer isn't accused, and the service doesn't claim a
+certainty it doesn't have.
+
+**The case that worried me more: the corner-store paragraph.** Here the
+signals *agree* — both lean mildly AI on plain, short sentences — and a plain
+average of 0.605 is only 0.045 below the AI threshold. A rule that only
+handled disagreement wouldn't protect this writer. The AI floor does: the
+style score (0.552) is below 0.6, so the score can't reach "ai" however the
+thresholds move.
+
+**What it costs:** AI text that gets either signal below 0.6 — by varying
+sentence lengths and adding commas, say — can never be labelled "ai", only
+"unsure". I'm accepting that trade on purpose (criterion 1).
+
+### The four calibration inputs
+
+Run through the same path as `/submit`: both signals, `combine_signals`, then
+`score_to_label`. The AI text is new — not one the style anchors were
+calibrated on — so the result isn't rigged by the calibration.
+
+| Input | Model | Style | Combined | Guess |
+|---|---|---|---|---|
+| Clearly AI (a paragraph on exercise) | 0.925 | 0.836 | 0.880 | **ai** |
+| Clearly human (my corner-store paragraph) | 0.659 | 0.552 | 0.606 | **unsure** |
+| Formal human (opening of *Federalist No. 10*) | **0.402** | **0.822** | 0.612 | **unsure** |
+| Lightly-edited AI (the exercise paragraph, a few words changed, one sentence split, a contraction added) | 0.881 | 0.874 | 0.877 | **ai** |
+
+**Formal human writing — a second split, the opposite way to *Walden*.** The
+model signal reads it as human (0.402): Madison's long, Latinate sentences
+surprised GPT-2 (perplexity 57.7). The style signal reads it as AI (0.822). That
+surprised me, so I printed the three measures: spread was 0.06 — three
+sentences of almost identical length — which the spread measure reads as
+machine-even rhythm. Punctuation and vocabulary were middling. My rule sees the
+model signal below the AI floor and holds the score in **unsure**. The writer
+isn't accused.
+
+**Lightly-edited AI — editing barely moved it.** 0.880 before, 0.877 after,
+both **ai**. The style score actually went *up* (0.836 → 0.874): splitting a
+sentence and dropping commas made the text more even and less punctuated, which
+looks more machine-like, not less. Light editing doesn't get AI text past this
+detector — which is good for detection, and a warning for criterion 3, which
+expects lightly-edited AI to land in "unsure".
+
+**What this tells me:**
+
+- No human text was labelled "ai", and both AI texts were. The AI floor is
+  doing its job.
+- **No human text reached "human"** — mine 0.606, *Federalist No. 10* 0.612,
+  *Walden* 0.384. The model signal scores human writing 0.40–0.76, and the
+  style signal's human anchors were set on *Walden*, an extreme case. Ordinary
+  human writing doesn't look like that. This puts criterion 3 at risk; the
+  fix is recalibrating the style anchors on more of my own writing in
+  Milestone 5, not loosening the human ceiling to force a label through.
+- Small samples: one run, four texts, and my piece is only 44 words. These
+  numbers say where to look, not what's true.
 
 
 ---
@@ -236,15 +349,15 @@ fool both to get a confident wrong answer.
 
 | Label | Score range | The exact text a reader sees |
 |---|---|---|
-| high-confidence human |  |  |
-| unsure |  |  |
-| high-confidence AI |  |  |
+| high-confidence human | 0.00 – 0.35 | "We think this was probably written by a person." |
+| unsure | 0.35 – 0.65 | "We're not sure whether this was written by a person or an AI. Our checks didn't give a clear answer, so we're not making a call either way." |
+| high-confidence AI | 0.65 – 1.00 | "Our checks suggest this was probably written by an AI. If that's wrong, you can appeal this decision using reference number {content_id}." |
 
 **Why I worded the "unsure" one this way:**
-<!-- It's the hardest of the three. It has to admit uncertainty without
-     sounding like an accusation, because the person reading it may well have
-     written every word themselves. -->
 
+The person reading this may have written every word, so the label must not sound like an accusation. Saying our checks didn't give a clear answer gives them a reason for the non-answer instead of a vague "we're not sure", and it makes clear we are not calling their work AI — we are declining to call it anything.
+
+I first wrote "our two checks disagreed", but that's only true for some "unsure" results. My combining rule puts a text in "unsure" in two situations: when the checks disagree (*Walden*, *Federalist No. 10*), and when they agree but only weakly (my own corner-store paragraph, where both leaned mildly AI). For the second kind, "disagreed" would tell the writer something false. "Didn't give a clear answer" is true in both.
 
 
 ---
@@ -260,26 +373,31 @@ fool both to get a confident wrong answer.
      two off the response, so leaving them out costs you next unit's
      diagnostics. -->
 
-*Milestone 3 — one signal. `style_score`, `confidence` and the real label are
-placeholders until Milestones 4 and 5. The text is an AI-written paragraph.*
+*The full pipeline: both signals, the combining rule, and the real label. The
+text is the clearly-AI calibration input: both signals agree (model 0.925,
+style 0.836), so the agreement rule lets the weighted average through
+unchanged and the guess is `ai`. `confidence` is the combined score — 0 is
+confidently human, 1 is confidently AI. The label quotes the `content_id` so
+the writer has what they need to appeal.*
 
 ```bash
 $ curl -X POST http://127.0.0.1:5000/submit \
   -H "Content-Type: application/json" \
-  -d '{"text": "Remote work has transformed the modern workplace in significant ways. It offers employees greater flexibility and helps them achieve a better work-life balance. Additionally, companies can reduce overhead costs and access a wider pool of talent. However, remote work also presents challenges, such as communication barriers and feelings of isolation. Overall, organizations that adopt clear policies and invest in the right tools are well positioned to succeed.", "creator_id": "abby"}'
+  -d '{"text": "Regular exercise offers numerous benefits for both physical and mental health. It strengthens the heart, improves circulation, and helps maintain a healthy weight. In addition, physical activity releases endorphins, which can reduce stress and improve mood. Experts recommend at least 150 minutes of moderate activity each week. By incorporating exercise into a daily routine, individuals can enhance their overall well-being and quality of life.", "creator_id": "abby"}'
 ```
 
 ```json
 HTTP 200
 {
-  "confidence": null,
-  "content_id": "2203b76b-02c8-4387-a12d-8d8efc48c3fb",
+  "combined_score": 0.8803,
+  "confidence": 0.8803,
+  "content_id": "2f5a6cbb-7435-4665-a3f1-2d7cf6d34206",
   "creator_id": "abby",
   "guess": "ai",
-  "label": "Placeholder — the real label comes in Milestone 5.",
-  "model_score": 0.75,
+  "label": "Our checks suggest this was probably written by an AI. If that's wrong, you can appeal this decision using reference number 2f5a6cbb-7435-4665-a3f1-2d7cf6d34206.",
+  "model_score": 0.925,
   "status": "decided",
-  "style_score": null
+  "style_score": 0.8356
 }
 ```
 
@@ -302,42 +420,75 @@ HTTP 400
 
 **An appeal**
 
-*Not built yet — `/appeal` arrives in Milestone 5.*
+*Against the submission above, using the reference number from its label.*
 
 ```bash
 $ curl -X POST http://127.0.0.1:5000/appeal \
   -H "Content-Type: application/json" \
-  -d '{"content_id": "...", "reasoning": "..."}'
+  -d '{"content_id": "2f5a6cbb-7435-4665-a3f1-2d7cf6d34206", "reasoning": "Sample appeal for the README: checking that an appeal moves this item to under_review without changing the original decision."}'
 ```
 
 ```json
+HTTP 200
+{
+  "content_id": "2f5a6cbb-7435-4665-a3f1-2d7cf6d34206",
+  "message": "Your appeal was recorded. A person will review it. The original result stays on record until then.",
+  "status": "under_review"
+}
+```
 
+An id that was never issued gets a clear answer instead of a silent success:
+
+```bash
+$ curl -X POST http://127.0.0.1:5000/appeal \
+  -H "Content-Type: application/json" \
+  -d '{"content_id": "does-not-exist", "reasoning": "test"}'
+```
+
+```json
+HTTP 404
+{
+  "error": "not_found",
+  "message": "We couldn't find a submission with reference number does-not-exist. Check it matches the one in your result."
+}
 ```
 
 **What the log shows afterwards**
 
-*After the submission above. The entry carries the same `content_id` the
-response returned, and `style_score` / `combined_score` are `null` until
-Milestone 4.*
+*After the submission and the appeal. Two entries for the same `content_id`:
+the original decision, untouched — same guess, same scores, same timestamp —
+and the appeal after it, carrying the writer's reasoning and the new status.
+Nothing was overwritten; the item's current status is its latest entry. The
+decision records both signal scores beside the combined one, so a surprising
+result can be traced back to the signal that caused it. The rejected bad input
+and the 404 left no entries.*
 
 ```bash
-$ curl "http://127.0.0.1:5000/log?limit=1"
+$ curl "http://127.0.0.1:5000/log?limit=2"
 ```
 
 ```json
 {
-  "count": 1,
+  "count": 2,
   "entries": [
     {
-      "combined_score": null,
-      "content_id": "2203b76b-02c8-4387-a12d-8d8efc48c3fb",
+      "combined_score": 0.8803,
+      "content_id": "2f5a6cbb-7435-4665-a3f1-2d7cf6d34206",
       "creator_id": "abby",
       "guess": "ai",
-      "label": "Placeholder — the real label comes in Milestone 5.",
-      "model_score": 0.75,
+      "label": "Our checks suggest this was probably written by an AI. If that's wrong, you can appeal this decision using reference number 2f5a6cbb-7435-4665-a3f1-2d7cf6d34206.",
+      "model_score": 0.925,
       "status": "decided",
-      "style_score": null,
-      "timestamp": "2026-11-01T18:54:51+00:00"
+      "style_score": 0.8356,
+      "timestamp": "2026-11-02T07:01:37+00:00"
+    },
+    {
+      "content_id": "2f5a6cbb-7435-4665-a3f1-2d7cf6d34206",
+      "creator_id": "abby",
+      "event": "appeal",
+      "reasoning": "Sample appeal for the README: checking that an appeal moves this item to under_review without changing the original decision.",
+      "status": "under_review",
+      "timestamp": "2026-11-02T07:16:37+00:00"
     }
   ]
 }
