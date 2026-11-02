@@ -500,15 +500,44 @@ $ curl "http://127.0.0.1:5000/log?limit=2"
 
 **Moment 1**
 
-- *What I asked for:*
-- *What came back:*
-- *What I changed:*
+**Moment 1 — designing the combining rule**
+
+- *What I asked for:* I asked for a way to combine the two signals in
+  `scoring.py::combine_signals` that would keep false positives low without
+  making the "human" label unreachable, given my criterion that at most 1 in 10
+  of my own pieces may be labelled high-confidence AI.
+
+- *What came back:* A weighted average (0.5 / 0.5) plus an "agreement floor":
+  a text can be labelled "ai" only if both signals are at or above 0.6,
+  otherwise the combined score is capped inside the unsure band. It also
+  suggested a symmetric human-side floor so "human" stays reachable.
+
+- *What I changed:* I rejected the first version, which capped the score at
+  `AI_THRESHOLD - 0.01` but set the human floor exactly equal to
+  `HUMAN_THRESHOLD` — that clause never fired, because `score <= HUMAN_THRESHOLD`
+  still matched. I separated the trigger from the pushed value (as the AI side
+  already did), moved the human trigger up to 0.5 so both signals only need to
+  "lean human", and wrote the rule and its numbers into my README before coding
+  it. I also kept equal weights after checking that each signal can be fooled
+  on its own.
 
 **Moment 2**
 
-- *What I asked for:*
-- *What came back:*
-- *What I changed:*
+**Moment 2 — debugging the test commands on Windows**
+
+- *What I asked for:* I asked how to send a JSON body to `/submit` and `/appeal`
+  from my terminal, and to explain a `Missing file specification after
+  redirection operator` error I got.
+
+- *What came back:* An explanation that I was in PowerShell, where `<<'EOF'` is
+  bash-only and `curl` is an alias for `Invoke-WebRequest`. It gave two fixes:
+  switch to Git Bash, or use PowerShell here-strings plus `curl.exe`.
+
+- *What I changed:* I stayed in PowerShell and used the here-string form with
+  `curl.exe`, then verified each response by hand rather than trusting the
+  commands blindly — this is how I found that the first human sample scored
+  0.6586 and was labelled "ai", which I recorded as a real false-positive case
+  for my criteria.
 
 <!-- ═══════════════════════ UNIT 8 — THE TEST ═══════════════════════ -->
 
