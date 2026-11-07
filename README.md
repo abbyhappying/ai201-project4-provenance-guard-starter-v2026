@@ -583,18 +583,139 @@ the pattern to look for.
 <!-- Every attack with its outcome and a held-or-broke mark.
      `run_attacks.py --label before` produces the table. -->
 
+Run: `python run_attacks.py --set attack_set`, 2026-11-07 09:36, 56 attacks,
+with limits of 5 per minute and 50 per day. The service never crashed and no
+request returned a 5xx.
 
+| ID | Family | Status | Guess | Held / Broke |
+|---|---|---|---|---|
+| EV01 | evasion | 200 | unsure | broke |
+| EV02 | evasion | 200 | unsure | broke |
+| EV03 | evasion | 200 | ai | held |
+| EV04 | evasion | 200 | ai | held |
+| EV05 | evasion | 200 | unsure | broke |
+| EV06 | evasion | 200 | unsure | broke |
+| EV07 | evasion | 200 | unsure | broke |
+| EV08 | evasion | 400 | — | held |
+| EV09 | evasion | 200 | ai | held |
+| EV10 | evasion | 200 | ai | held |
+| FP01 | false_positive | 200 | unsure | held |
+| FP02 | false_positive | 200 | ai | broke |
+| FP03 | false_positive | 200 | ai | broke |
+| FP04 | false_positive | 200 | ai | broke |
+| FP05 | false_positive | 200 | ai | broke |
+| FP06 | false_positive | 200 | unsure | held |
+| FP07 | false_positive | 200 | unsure | held |
+| FP08 | false_positive | 400 | — | held |
+| PI01 | prompt_injection | 200 | unsure | held |
+| PI02 | prompt_injection | 200 | unsure | held |
+| PI03 | prompt_injection | 200 | unsure | held |
+| PI04 | prompt_injection | 200 | unsure | held |
+| PI05 | prompt_injection | 200 | unsure | held |
+| PI06 | prompt_injection | 200 | unsure | held |
+| MF01 | malformed | 400 | — | held |
+| MF02 | malformed | 400 | — | held |
+| MF03 | malformed | 400 | — | held |
+| MF04 | malformed | 400 | — | held |
+| MF05 | malformed | 400 | — | held |
+| MF06 | malformed | 400 | — | held |
+| MF07 | malformed | 400 | — | held |
+| MF08 | malformed | 400 | — | held |
+| RQ01 | malformed | 400 | — | held |
+| RQ02 | malformed | 400 | — | held |
+| RQ03 | malformed | 400 | — | held |
+| RQ04 | malformed | 400 | — | held |
+| RQ05 | malformed | 400 | — | held |
+| RQ06 | malformed | 400 | — | held |
+| RQ07 | malformed | 400 | — | held |
+| RQ08 | malformed | 400 | — | held |
+| RQ09 | malformed | 400 | — | held |
+| RQ10 | malformed | 429 | — | held |
+| RQ11 | malformed | 429 | — | held |
+| RQ12 | malformed | 400 | — | held |
+| FL01_01 | flood_same_creator | 400 | — | held |
+| FL01_02 | flood_same_creator | 400 | — | held |
+| FL01_03 | flood_same_creator | 400 | — | held |
+| FL01_04 | flood_same_creator | 400 | — | held |
+| FL01_05 | flood_same_creator | 400 | — | held |
+| FL01_06 | flood_same_creator | 429 | — | held |
+| FL01_07 | flood_same_creator | 429 | — | held |
+| FL01_08 | flood_same_creator | 429 | — | held |
+| FL01_09 | flood_same_creator | 429 | — | held |
+| FL01_10 | flood_same_creator | 429 | — | held |
+| FL01_11 | flood_same_creator | 429 | — | held |
+| FL01_12 | flood_same_creator | 429 | — | held |
+
+| Family | Attacks | Held | Broke |
+|---|---|---|---|
+| evasion | 10 | 5 | 5 |
+| false_positive | 8 | 4 | 4 |
+| prompt_injection | 6 | 6 | 0 |
+| malformed | 20 | 20 | 0 |
+| flood_same_creator | 12 | 12 | 0 |
+
+**47 held, 9 broke.**
+
+How the rows were marked: an evasion broke if the AI text escaped "ai"; a
+false positive broke if human text came back "ai"; a prompt injection broke if
+it forced a confident verdict; a malformed request broke only on a 5xx; the
+flood held because 429s appeared. A few rows need a caveat:
+
+- **EV08 and FP08** returned 400 because they are under the 20-word minimum, so
+  they were never scored. FP08 is real human writing that was refused, not one
+  that was protected.
+- **RQ10 and RQ11** returned 429 before validation ran. Their bodies give the
+  limiter no usable `creator_id`, so they were counted against the shared
+  per-IP bucket, which RQ02, RQ06, RQ07, RQ08 and RQ09 had already filled.
+  How the service handles form-encoded and `text/plain` bodies was never tested.
+- **FL01_01–05** returned 400 because the flood text is under 20 words. The
+  limiter counted them anyway, and FL01_06–12 returned 429.
 
 **Ten audit log entries from the run**
 
-<!-- Choose entries that show the interesting failures, not the ten easiest. -->
 
 ```json
-
+{"timestamp": "2026-11-07T17:36:07+00:00", "content_id": "fb098404-6c21-4696-a055-658c20ca2b15", "creator_id": "attacker_FP03", "guess": "ai", "model_score": 0.8051, "style_score": 0.7644, "combined_score": 0.7848, "label": "Our checks suggest this was probably written by an AI. If that's wrong, you can appeal this decision using reference number fb098404-6c21-4696-a055-658c20ca2b15.", "status": "decided"}
+{"timestamp": "2026-11-07T17:36:07+00:00", "content_id": "c6a2a9c1-8d77-4933-8952-db73ff706d89", "creator_id": "attacker_FP04", "guess": "ai", "model_score": 0.8329, "style_score": 0.7281, "combined_score": 0.7805, "label": "Our checks suggest this was probably written by an AI. If that's wrong, you can appeal this decision using reference number c6a2a9c1-8d77-4933-8952-db73ff706d89.", "status": "decided"}
+{"timestamp": "2026-11-07T17:36:07+00:00", "content_id": "26bd8712-eb64-4a42-8ff1-4b1838cd69e2", "creator_id": "attacker_FP02", "guess": "ai", "model_score": 0.7387, "style_score": 0.7858, "combined_score": 0.7623, "label": "Our checks suggest this was probably written by an AI. If that's wrong, you can appeal this decision using reference number 26bd8712-eb64-4a42-8ff1-4b1838cd69e2.", "status": "decided"}
+{"timestamp": "2026-11-07T17:36:04+00:00", "content_id": "3b30806f-6181-4b1c-8dc7-7acd9d6b0b97", "creator_id": "attacker_EV03", "guess": "ai", "model_score": 0.6662, "style_score": 0.659, "combined_score": 0.6626, "label": "Our checks suggest this was probably written by an AI. If that's wrong, you can appeal this decision using reference number 3b30806f-6181-4b1c-8dc7-7acd9d6b0b97.", "status": "decided"}
+{"timestamp": "2026-11-07T17:36:06+00:00", "content_id": "5add58b9-ed40-49ab-a03a-02e3599d7a26", "creator_id": "attacker_EV10", "guess": "ai", "model_score": 0.9792, "style_score": 0.6061, "combined_score": 0.7926, "label": "Our checks suggest this was probably written by an AI. If that's wrong, you can appeal this decision using reference number 5add58b9-ed40-49ab-a03a-02e3599d7a26.", "status": "decided"}
+{"timestamp": "2026-11-07T17:36:05+00:00", "content_id": "ea6616af-a79f-4702-b5fd-d54e4d30cf23", "creator_id": "attacker_EV05", "guess": "unsure", "model_score": 0.3212, "style_score": 0.3919, "combined_score": 0.3566, "label": "We're not sure whether this was written by a person or an AI. Our checks didn't give a clear answer, so we're not making a call either way.", "status": "decided"}
+{"timestamp": "2026-11-07T17:36:04+00:00", "content_id": "11fac502-59fc-4d97-8d4e-a6bc586f1624", "creator_id": "attacker_EV01", "guess": "unsure", "model_score": 0.1635, "style_score": 1.0, "combined_score": 0.5817, "label": "We're not sure whether this was written by a person or an AI. Our checks didn't give a clear answer, so we're not making a call either way.", "status": "decided"}
+{"timestamp": "2026-11-07T17:36:08+00:00", "content_id": "a49de798-ce39-40fc-ba55-d39bd3e8bc8f", "creator_id": "attacker_FP06", "guess": "unsure", "model_score": 0.8814, "style_score": 0.4888, "combined_score": 0.64, "label": "We're not sure whether this was written by a person or an AI. Our checks didn't give a clear answer, so we're not making a call either way.", "status": "decided"}
+{"timestamp": "2026-11-07T17:36:08+00:00", "content_id": "fcf6389a-e144-4262-9f70-7dd12202cd98", "creator_id": "attacker_FP07", "guess": "unsure", "model_score": 0.8816, "style_score": 0.3, "combined_score": 0.5908, "label": "We're not sure whether this was written by a person or an AI. Our checks didn't give a clear answer, so we're not making a call either way.", "status": "decided"}
+{"timestamp": "2026-11-07T17:36:09+00:00", "content_id": "8f86662d-b853-457b-9b3e-b5a26039973c", "creator_id": "attacker_PI05", "guess": "unsure", "model_score": 0.6401, "style_score": 0.45, "combined_score": 0.5451, "label": "We're not sure whether this was written by a person or an AI. Our checks didn't give a clear answer, so we're not making a call either way.", "status": "decided"}
+{"timestamp": "2026-11-07T17:36:10+00:00", "creator_id": "attacker_flood", "event": "rejected", "status": "rejected", "reason": "rate_limited", "limit": "5 per 1 minute"}
+{"timestamp": "2026-11-07T17:36:10+00:00", "creator_id": "unknown", "event": "rejected", "status": "rejected", "reason": "rate_limited", "limit": "5 per 1 minute"}
 ```
 
-**The single worst outcome** — the one I'd least want to explain to a writer
-whose work got caught by it:
+1. **FP03**: A non-native speaker's careful human writing was labelled "ai" at 0.785, with both signals above 0.76.
+2. **FP04**: A human student essay written to a rubric was labelled "ai" at 0.781, so formulaic structure alone gets a real student accused.
+3. **FP02**: Formal human writing was labelled "ai" at 0.762, so register alone pushes both signals past the AI floor.
+4. **EV03**: This evasion was still labelled "ai", but only 0.013 above the 0.65 threshold, so it nearly escaped.
+5. **EV10**: This evasion was still labelled "ai" at 0.793, because repeated structure drove the model signal to 0.979.
+6. **EV05**: Heavily edited AI text scored 0.357, only 0.007 above the 0.35 human threshold, so it nearly passed as human.
+7. **EV01**: Typos dropped the model signal to 0.164 while the style signal stayed at 1.0, and the full disagreement produced "unsure".
+8. **FP06**: Human text with a 0.881 model signal was held at the 0.64 unsure cap, because its style signal was below the AI floor.
+9. **FP07**: Human text with deliberate repetition had a 0.882 model signal, and only the 0.30 style signal kept it out of "ai".
+10. **PI05**: The audit-log injection failed, because the logged entry has one clean `guess` and `combined_score` and none of the injected values.
+11. **Flood rejection**: The 429s from the flood were logged under `attacker_flood`, so the rate limiter leaves a visible trace.
+12. **`unknown` rejection**: RQ10 got a 429 under `unknown`, because requests with no usable `creator_id` share one per-IP bucket.
+
+**The single worst outcome**
+
+The row I would least want to explain is FP04: a human-written essay that
+came back `guess: "ai"` at `combined_score` 0.7805, with `model_score`
+0.8329 and `style_score` 0.7281.
+
+It is the hardest to defend because both signals agreed, and both were well
+above the AI floor, so none of my safety rules fired. There is no single
+signal to point at and say "this one was wrong" — the service was confident
+from two independent directions and still accused a real writer. A non-native
+or rubric-driven writer whose careful, formal prose reads as "predictable" to
+GPT-2 and "even" to the stylometer is exactly the person my README's
+false-positive trace is about, and this row is that person being labelled
+high-confidence AI with an appeal link as their only recourse.
 
 
 
@@ -602,21 +723,134 @@ whose work got caught by it:
 
 ## Run Log and Verdicts
 
-<!-- Your five criteria across three trials. `run_eval.py --label before`. -->
 
 | Criterion | Target | Run 1 | Run 2 | Run 3 | Verdict |
 |---|---|---|---|---|---|
-| 1.  |  |  |  |  |  |
-| 2.  |  |  |  |  |  |
-| 3.  |  |  |  |  |  |
-| 4.  |  |  |  |  |  |
-| 5.  |  |  |  |  |  |
+| 1. My own writing is rarely called AI | At most 1 of 10 human pieces gets `"ai"` | 7 of 10 `"ai"` (all 3 plain L2 pieces among them) | 7 of 10 `"ai"` | 7 of 10 `"ai"` | **Not met** |
+| 2. Score spread | Zero overlap (lowest AI > highest human) and AI mean ≥ human mean + 0.25 | Overlap: lowest AI 0.633 < highest human 0.733. Means 0.724 vs 0.690, gap 0.034 | Same | Same | **Not met** |
+| 3. Label coverage | ≥ 1 human gets `"human"`, ≥ 1 AI gets `"ai"`, ≥ 2 of 5 borderline get `"unsure"` | Human 0 of 2 (unsure, ai); AI 1 of 2; borderline 1 of 5 | Same | Same | **Not met** |
+| 4. Appeal path | 3 real ids → `200 under_review`, appeal logged, original unchanged; 3 fake ids → `404`; missing `reasoning` → `400` | Checked once by hand, not part of the three trials | — | — | **Appeal half met; 404/400 to confirm** |
+| 5. Bad input | Every bad request → `400`, never `500` | 7 of 7 → `400` | 7 of 7 → `400` | 7 of 7 → `400` | **Met** |
+
+Notes on the evidence:
+
+- **Criterion 2** uses the score-spread scenario: the first five texts are the
+  GPT-4o group (0.6328, 0.7815, 0.7553, 0.6400, 0.8094) and the last five are
+  mine (0.7245, 0.7065, 0.7334, 0.5874, 0.6959). Two AI texts score below four
+  of my five human texts.
+- **Criterion 3**: the scenario uses 2 human texts, 2 AI texts and 5 borderline
+  texts, not the full 5 + 5 that `criteria.md` describes. Neither human text
+  reached `"human"` (0.6055 unsure, 0.7195 ai). Only borderline 1 (0.6335)
+  came back `"unsure"`; the other four came back `"ai"`.
+- **Criterion 4**: `logs/audit.jsonl` shows three real `content_id`s appealed on
+  2026-11-02 (`3094e770…`, `e8f10c9a…`, `e412ee07…`), each with
+  `status: "under_review"`, and each original `"decided"` entry still present
+  with the same `guess`, score and timestamp. The `404` and `400` responses
+  are not written to the log, so they need their own curl output as evidence.
+- **Criterion 5**: the eval sends 7 of the 8 cases. Case (f), a JSON list body,
+  is covered by attack RQ07 in the attack run above, which also got `400`.
+- An earlier run at 13:38 is not used: its third trial hit my own 5-per-minute
+  limit and every request came back `429`.
 
 **Real output from one trial**, pasted as text, naming the file and function
 that produced it:
 
-```json
+Criterion 1, trial 1, from `results/run_2026-11-07_1335_before.md`, produced by
+`run_eval.py::main` against `app.py::submit`:
 
+```json
+[
+  {
+    "status": 200,
+    "guess": "ai",
+    "confidence": 0.8316,
+    "model_score": 0.8631,
+    "style_score": 0.8,
+    "label": "Our checks suggest this was probably written by an AI. If that's wrong, you can appeal this decision using reference number 5de6f270-b7eb-4171-9c45-f50c088c8a3b.",
+    "sent": "I go to the market every Saturday morning. I buy fruit and vegetables "
+  },
+  {
+    "status": 200,
+    "guess": "ai",
+    "confidence": 0.8262,
+    "model_score": 0.8517,
+    "style_score": 0.8008,
+    "label": "Our checks suggest this was probably written by an AI. If that's wrong, you can appeal this decision using reference number f8de6b59-4403-4180-b302-03f18f4a95aa.",
+    "sent": "My sister lives in a small town near the sea. She works in a bakery. E"
+  },
+  {
+    "status": 200,
+    "guess": "ai",
+    "confidence": 0.8481,
+    "model_score": 0.8486,
+    "style_score": 0.8476,
+    "label": "Our checks suggest this was probably written by an AI. If that's wrong, you can appeal this decision using reference number 8de91e75-8cf2-4c53-9b78-b2ef75274dbf.",
+    "sent": "Last weekend I cleaned my room. I put all my books on the shelf. I was"
+  },
+  {
+    "status": 200,
+    "guess": "unsure",
+    "confidence": 0.6055,
+    "model_score": 0.6586,
+    "style_score": 0.5524,
+    "label": "We're not sure whether this was written by a person or an AI. Our checks didn't give a clear answer, so we're not making a call either way.",
+    "sent": "I walked to the corner store this morning. The owner was out front, sw"
+  },
+  {
+    "status": 200,
+    "guess": "unsure",
+    "confidence": 0.55,
+    "model_score": 0.4214,
+    "style_score": 0.6787,
+    "label": "We're not sure whether this was written by a person or an AI. Our checks didn't give a clear answer, so we're not making a call either way.",
+    "sent": "The library near my apartment has a reading room with tall windows. I "
+  },
+  {
+    "status": 200,
+    "guess": "ai",
+    "confidence": 0.7195,
+    "model_score": 0.6775,
+    "style_score": 0.7615,
+    "label": "Our checks suggest this was probably written by an AI. If that's wrong, you can appeal this decision using reference number 60282565-53df-4fda-9b53-b5ecee93be01.",
+    "sent": "My grandfather kept a notebook of every bird he saw from his kitchen w"
+  },
+  {
+    "status": 200,
+    "guess": "ai",
+    "confidence": 0.8126,
+    "model_score": 0.7089,
+    "style_score": 0.9163,
+    "label": "Our checks suggest this was probably written by an AI. If that's wrong, you can appeal this decision using reference number 17da04bb-afb5-4b9e-a26f-7721956fd15e.",
+    "sent": "There is a bench at the top of the hill behind our school. You can see"
+  },
+  {
+    "status": 200,
+    "guess": "ai",
+    "confidence": 0.8424,
+    "model_score": 0.797,
+    "style_score": 0.8877,
+    "label": "Our checks suggest this was probably written by an AI. If that's wrong, you can appeal this decision using reference number 7502400e-20ba-4f64-b917-88d5354fa131.",
+    "sent": "I tried to cook a new recipe last night. It was a simple pasta dish wi"
+  },
+  {
+    "status": 200,
+    "guess": "unsure",
+    "confidence": 0.426,
+    "model_score": 0.4206,
+    "style_score": 0.4314,
+    "label": "We're not sure whether this was written by a person or an AI. Our checks didn't give a clear answer, so we're not making a call either way.",
+    "sent": "The train was late again this morning, so I stood on the platform and "
+  },
+  {
+    "status": 200,
+    "guess": "ai",
+    "confidence": 0.6505,
+    "model_score": 0.6474,
+    "style_score": 0.6537,
+    "label": "Our checks suggest this was probably written by an AI. If that's wrong, you can appeal this decision using reference number 6b027aa1-6244-479f-8fac-0183de80ee40.",
+    "sent": "My neighbour has a dog that barks at everything. At first it annoyed m"
+  }
+]
 ```
 
 **Diagnoses**
