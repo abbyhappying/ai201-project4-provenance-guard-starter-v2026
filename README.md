@@ -545,21 +545,32 @@ $ curl "http://127.0.0.1:5000/log?limit=2"
 
 ## Rate Limiting
 
-**My limits:** ___ per minute, ___ per day
+**My limits:** 5 per minute, 50 per day
 
 **Why those numbers and not others:**
-<!-- Think about two people: a real writer submitting their own work a few
-     times an hour, and a script sending a thousand variations to map your
-     thresholds. Your numbers have to be liveable for the first and hostile to
-     the second. -->
+A real writer pastes text, reads the result, edits, and resubmits — at least
+15–30 seconds per round, so 2–3 a minute at most. Five per minute leaves room
+for a double-click or a quick fix-and-resend, but a script sending dozens of
+requests per second hits the cap in seconds. The daily limit is what actually
+stops a patient script that pauses between requests to stay under the
+per-minute cap: mapping my thresholds takes about 1,000 variations, and at 50 a
+day from one `creator_id` that is 20 days of probing. I chose 5/50 over the
+starter 10/200 because it cuts probing time from about 5 days to 20 and makes
+the flood test unambiguous — a limit below 15 is the only way `--flood 15` can
+show a 429 at all.
 
-**What a caller counts as:** <!-- per address, or per creator_id? They fail
-differently — one script can look like a thousand callers, and one household
-can look like one. -->
+**What a caller counts as:** a `creator_id`. If the request has no usable
+`creator_id`, `app.py` falls back to the caller's IP address. This fails in
+both directions: one script can send each request under a new `creator_id` and
+look like a thousand different callers, and one household or office behind a
+single IP can look like one caller. Per-creator limits are cheap to dodge and
+easy to share, which is why the audit log is the second half of the defence —
+many near-identical submissions from `creator_id`s I have never seen before is
+the pattern to look for.
 
 **The run of status codes when I pushed past it:**
 
-<!-- python run_attacks.py --flood 15 -->
+200 200 200 200 200 429 429 429 429 429 429 429 429 429 429
 
 ```
 
