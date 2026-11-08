@@ -729,7 +729,7 @@ high-confidence AI with an appeal link as their only recourse.
 | 1. My own writing is rarely called AI | At most 1 of 10 human pieces gets `"ai"` | 7 of 10 `"ai"` (all 3 plain L2 pieces among them) | 7 of 10 `"ai"` | 7 of 10 `"ai"` | **Not met** |
 | 2. Score spread | Zero overlap (lowest AI > highest human) and AI mean ≥ human mean + 0.25 | Overlap: lowest AI 0.633 < highest human 0.733. Means 0.724 vs 0.690, gap 0.034 | Same | Same | **Not met** |
 | 3. Label coverage | ≥ 1 human gets `"human"`, ≥ 1 AI gets `"ai"`, ≥ 2 of 5 borderline get `"unsure"` | Human 0 of 2 (unsure, ai); AI 1 of 2; borderline 1 of 5 | Same | Same | **Not met** |
-| 4. Appeal path | 3 real ids → `200 under_review`, appeal logged, original unchanged; 3 fake ids → `404`; missing `reasoning` → `400` | Checked once by hand, not part of the three trials | — | — | **Appeal half met; 404/400 to confirm** |
+| 4. Appeal path | 3 real ids → `200 under_review`, appeal logged, original unchanged; 3 fake ids → `404`; missing `reasoning` → `400` | Checked once by hand with `curl`, not part of the three trials: 3 of 3 real → `under_review`, 3 of 3 fake → `404`, missing `reasoning` → `400` | — | — | **Met** |
 | 5. Bad input | Every bad request → `400`, never `500` | 7 of 7 → `400` | 7 of 7 → `400` | 7 of 7 → `400` | **Met** |
 
 Notes on the evidence:
@@ -746,7 +746,42 @@ Notes on the evidence:
   2026-11-02 (`3094e770…`, `e8f10c9a…`, `e412ee07…`), each with
   `status: "under_review"`, and each original `"decided"` entry still present
   with the same `guess`, score and timestamp. The `404` and `400` responses
-  are not written to the log, so they need their own curl output as evidence.
+  are not written to the log, so I checked them with `curl` on 2026-11-08
+  against the running service (output below); the log had 643 lines before
+  and after.
+
+  ```
+  $ curl -s -X POST http://127.0.0.1:5000/appeal -H 'Content-Type: application/json' -d '{"content_id": "00000000-0000-0000-0000-000000000000", "reasoning": "I wrote this myself."}'
+  {
+    "error": "not_found",
+    "message": "We couldn't find a submission with reference number 00000000-0000-0000-0000-000000000000. Check it matches the one in your result."
+  }
+  HTTP 404
+
+  $ curl -s -X POST http://127.0.0.1:5000/appeal -H 'Content-Type: application/json' -d '{"content_id": "not-a-real-id", "reasoning": "I wrote this myself."}'
+  {
+    "error": "not_found",
+    "message": "We couldn't find a submission with reference number not-a-real-id. Check it matches the one in your result."
+  }
+  HTTP 404
+
+  $ curl -s -X POST http://127.0.0.1:5000/appeal -H 'Content-Type: application/json' -d '{"content_id": "11111111-2222-3333-4444-555555555555", "reasoning": "I wrote this myself."}'
+  {
+    "error": "not_found",
+    "message": "We couldn't find a submission with reference number 11111111-2222-3333-4444-555555555555. Check it matches the one in your result."
+  }
+  HTTP 404
+
+  $ curl -s -X POST http://127.0.0.1:5000/appeal -H 'Content-Type: application/json' -d '{"content_id": "3094e770-9376-4b1b-ab4e-bb79fe5f8c4e"}'
+  {
+    "error": "invalid_input",
+    "message": "'reasoning' is required — tell us why you think the result is wrong."
+  }
+  HTTP 400
+  ```
+
+  The missing-`reasoning` request uses a real `content_id`, so the missing
+  field is the only cause of the `400`.
 - **Criterion 5**: the eval sends 7 of the 8 cases. Case (f), a JSON list body,
   is covered by attack RQ07 in the attack run above, which also got `400`.
 - An earlier run at 13:38 is not used: its third trial hit my own 5-per-minute
@@ -862,7 +897,7 @@ Criterion 1, trial 1, from `results/run_2026-11-07_1335_before.md`, produced by
 | 1. my own writing not flagged as AI | ≤ 1/10 | **MISSED** | 7 of 10 labelled "ai" in all three trials |
 | 2. score spread | AI mean − human mean ≥ 0.25 | **MISSED** | 0.724 vs 0.690, gap ≈ 0.03 |
 | 3. all three labels reachable | 3/3 | **MISSED** | only "ai" and "unsure"; no "human" in any trial |
-| 4. appeal always changes status | 5/5 | 1/1 (by hand) | **MET**|
+| 4. appeal always changes status | 3 real → `under_review`, 3 fake → `404`, no `reasoning` → `400` | **MET** | Checked once by hand: 3 of 3 real appeals logged with originals unchanged, 3 of 3 fake ids `404`, missing `reasoning` `400` |
 | 5. bad input returns 400, never 500 | 7/7 | **MET** | 7 of 7 returned 400 in all three trials |
 
 
@@ -912,21 +947,142 @@ HUMAN_THRESHOLD), not tuning combine_signals, which is behaving as designed.
 
 ## The Improvement
 
-**What I changed:**
+**What I changed:** one number. In `config.py`, `AI_THRESHOLD` went from 0.65
+to 0.75, which widens the unsure band from 0.35–0.65 to 0.35–0.75. The unsure
+cap in `scoring.py::combine_signals` is derived from it, so it moved from 0.64
+to 0.74 with it. Weights, `AI_FLOOR` and `HUMAN_THRESHOLD` are unchanged.
 
-**Which diagnosis pointed at it:**
+**Which diagnosis pointed at it:** Miss 1. Seven of my own ten pieces were
+labelled "ai", with combined scores from 0.65 to 0.85, so real writing was
+landing in the high-confidence AI band. The pattern diagnosis says the real
+fix is upstream in the signals, but that is more than one change. Raising the
+AI threshold is the one change that acts directly on the cost my criteria put
+first: a wrong accusation costs the writer more than a missed detection costs
+the site.
 
 ### Attack Run — After
 
 <!-- Same format. `run_attacks.py --label after` -->
 
+Run: `python run_attacks.py --set attack_set --label after`, 2026-11-08 08:10,
+56 attacks, written to `results/attack_run_2026-11-08_0810_after.md`. Same
+limits as before (5 per minute, 50 per day). No request returned a 5xx.
 
+| ID | Family | Status | Guess | Held / Broke |
+|---|---|---|---|---|
+| EV01 | evasion | 200 | unsure | broke |
+| EV02 | evasion | 200 | unsure | broke |
+| EV03 | evasion | 200 | unsure | **broke** (was held) |
+| EV04 | evasion | 200 | ai | held |
+| EV05 | evasion | 200 | unsure | broke |
+| EV06 | evasion | 200 | unsure | broke |
+| EV07 | evasion | 200 | unsure | broke |
+| EV08 | evasion | 400 | — | held |
+| EV09 | evasion | 200 | unsure | **broke** (was held) |
+| EV10 | evasion | 200 | ai | held |
+| FP01 | false_positive | 200 | unsure | held |
+| FP02 | false_positive | 200 | ai | broke |
+| FP03 | false_positive | 200 | ai | broke |
+| FP04 | false_positive | 200 | ai | broke |
+| FP05 | false_positive | 200 | ai | broke |
+| FP06 | false_positive | 200 | unsure | held |
+| FP07 | false_positive | 200 | unsure | held |
+| FP08 | false_positive | 400 | — | held |
+| PI01 | prompt_injection | 200 | unsure | held |
+| PI02 | prompt_injection | 200 | unsure | held |
+| PI03 | prompt_injection | 200 | unsure | held |
+| PI04 | prompt_injection | 200 | unsure | held |
+| PI05 | prompt_injection | 200 | unsure | held |
+| PI06 | prompt_injection | 200 | unsure | held |
+| MF01 | malformed | 400 | — | held |
+| MF02 | malformed | 400 | — | held |
+| MF03 | malformed | 400 | — | held |
+| MF04 | malformed | 400 | — | held |
+| MF05 | malformed | 400 | — | held |
+| MF06 | malformed | 400 | — | held |
+| MF07 | malformed | 400 | — | held |
+| MF08 | malformed | 400 | — | held |
+| RQ01 | malformed | 400 | — | held |
+| RQ02 | malformed | 400 | — | held |
+| RQ03 | malformed | 400 | — | held |
+| RQ04 | malformed | 400 | — | held |
+| RQ05 | malformed | 400 | — | held |
+| RQ06 | malformed | 400 | — | held |
+| RQ07 | malformed | 400 | — | held |
+| RQ08 | malformed | 400 | — | held |
+| RQ09 | malformed | 400 | — | held |
+| RQ10 | malformed | 429 | — | held |
+| RQ11 | malformed | 429 | — | held |
+| RQ12 | malformed | 400 | — | held |
+| FL01_01 | flood_same_creator | 400 | — | held |
+| FL01_02 | flood_same_creator | 400 | — | held |
+| FL01_03 | flood_same_creator | 400 | — | held |
+| FL01_04 | flood_same_creator | 400 | — | held |
+| FL01_05 | flood_same_creator | 400 | — | held |
+| FL01_06 | flood_same_creator | 429 | — | held |
+| FL01_07 | flood_same_creator | 429 | — | held |
+| FL01_08 | flood_same_creator | 429 | — | held |
+| FL01_09 | flood_same_creator | 429 | — | held |
+| FL01_10 | flood_same_creator | 429 | — | held |
+| FL01_11 | flood_same_creator | 429 | — | held |
+| FL01_12 | flood_same_creator | 429 | — | held |
+
+| Family | Attacks | Held (before → after) | Broke (before → after) |
+|---|---|---|---|
+| evasion | 10 | 5 → 3 | 5 → 7 |
+| false_positive | 8 | 4 → 4 | 4 → 4 |
+| prompt_injection | 6 | 6 → 6 | 0 → 0 |
+| malformed | 20 | 20 → 20 | 0 → 0 |
+| flood_same_creator | 12 | 12 → 12 | 0 → 0 |
+
+**45 held, 11 broke** (before: 47 held, 9 broke).
 
 **Did it help, and how do I know:**
 
 <!-- Widening the unsure band usually fixes one problem and creates another.
      Reporting that trade honestly is worth full credit. -->
 
+Partly, and it cost something. The evidence is the two "after" runs:
+`results/run_2026-11-08_0814_after.md` (`run_eval.py --label after`, three
+identical trials) and the attack run above.
+
+| Criterion | Before | After | Verdict |
+|---|---|---|---|
+| 1. My own writing (≤ 1 of 10 "ai") | 7 of 10 "ai" | **5 of 10 "ai"** | Still not met |
+| 2. Score spread (zero overlap, gap ≥ 0.25) | Gap 0.034, overlapping | Gap 0.045, overlapping | Still not met |
+| 3. Label coverage | Human 0/2, AI 1/2, borderline unsure 1/5 | Human 0/2, AI 1/2, borderline unsure 1/5 | Still not met |
+| 4. Appeal path | Met (by hand with `curl`) | Not affected: `/appeal` never reads the thresholds | Met |
+| 5. Bad input | 7 of 7 → 400 | 7 of 7 → 400 | Met |
+
+What it fixed:
+
+- Two of my own pieces moved from "ai" to "unsure": the bird notebook (0.7195)
+  and the barking dog (0.6505).
+- All five of my human texts in the score-spread group now get "unsure"; four
+  of them were "ai" before (0.6959–0.7334).
+
+What it cost:
+
+- Two evasions that were caught now get through. EV03 (pasted quotation, 0.663)
+  and EV09 (human opening bolted onto AI text, 0.709) moved from "ai" to
+  "unsure". Evasion went from 5 broke to 7.
+- The capped score for texts whose signals disagree moved from 0.64 to 0.74,
+  so their numbers rose (FP06 0.640 → 0.685, PI03 0.640 → 0.698), although
+  their label stayed "unsure".
+
+What it did not touch:
+
+- The false-positive attacks are unchanged. FP02–FP05 score 0.762–0.785, all
+  above 0.75, so 4 of 7 scored human texts in the attack set are still called
+  "ai". FP03, my worst outcome, is still "ai" at 0.785.
+- My three plain L2 pieces are still "ai" at 0.826–0.848. Those are the
+  writers this README is about, and they score higher than all five GPT-4o
+  texts (0.633–0.809). No threshold that still lets real AI text reach "ai" can clear
+  them, which confirms the pattern diagnosis: the problem is in the signals,
+  not the thresholds.
+
+So the change moved criterion 1 in the right direction (7 → 5) at the price
+of two more evasions, and it made no criterion pass.
 
 
 ---

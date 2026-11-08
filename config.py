@@ -72,7 +72,7 @@ WEIGHT_STYLE_SIGNAL = 0.5
 # that decide who pays for it.
 
 HUMAN_THRESHOLD = 0.35
-AI_THRESHOLD = 0.65
+AI_THRESHOLD = 0.75
 
 # The agreement rule in scoring.py::combine_signals. A confident label needs
 # both signals on the same side; when they split, the score is held inside the
@@ -83,7 +83,7 @@ AI_THRESHOLD = 0.65
 # from them, so they stay inside the unsure band if the thresholds move.
 
 AI_FLOOR = 0.6                          # "ai" only if BOTH signals are >= this
-UNSURE_CAP = AI_THRESHOLD - 0.01        # 0.64 — just inside the unsure band
+UNSURE_CAP = AI_THRESHOLD - 0.01        # 0.74 — just inside the unsure band
 HUMAN_CEILING = 0.5                     # "human" only if BOTH signals are <= this
 HUMAN_FLOOR = HUMAN_THRESHOLD + 0.01    # 0.36 — just inside the unsure band
 

@@ -34,7 +34,7 @@ def combine_signals(model_score: float, style_score: float) -> float:
     needs both signals on the same side:
 
       1. Weighted average (WEIGHT_MODEL_SIGNAL / WEIGHT_STYLE_SIGNAL, 0.5 each).
-      2. If either signal is below AI_FLOOR (0.6), cap at UNSURE_CAP (0.64):
+      2. If either signal is below AI_FLOOR (0.6), cap at UNSURE_CAP (0.74):
          "unsure" at worst, never "ai". One signal can't convict on its own.
       3. If either signal is above HUMAN_CEILING (0.5), raise to HUMAN_FLOOR
          (0.36): "unsure" at best, never "human".
@@ -75,7 +75,7 @@ def score_to_label(score: float, content_id: str | None = None) -> tuple[str, st
 
     Ranges (thresholds in config.py):
         score <= HUMAN_THRESHOLD (0.35)  -> "human"
-        score >= AI_THRESHOLD    (0.65)  -> "ai"
+        score >= AI_THRESHOLD    (0.75)  -> "ai"
         anything between                 -> "unsure"
 
     Returns:
