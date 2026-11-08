@@ -570,10 +570,12 @@ the pattern to look for.
 
 **The run of status codes when I pushed past it:**
 
-200 200 200 200 200 429 429 429 429 429 429 429 429 429 429
+`python run_attacks.py --flood 15`, 2026-11-07 09:19, produced by
+`run_attacks.py::run_flood` and written to `results/flood_2026-11-07_0919.md`
+(15 submissions as `flood_tester`, rate limited: 10):
 
 ```
-
+200 200 200 200 200 429 429 429 429 429 429 429 429 429 429
 ```
 
 ---
@@ -941,6 +943,44 @@ unreachable, and the spread collapses. The highest-leverage fix is signal
 one's calibration on human prose (or a wider unsure band and a higher
 HUMAN_THRESHOLD), not tuning combine_signals, which is behaving as designed.
 
+Broken attacks — false positives (FP02, FP03, FP04, FP05)
+Stage and mechanism: the same as Miss 1. Formal, rubric-driven, technical and
+careful second-language writing scored 0.74–0.83 on the model signal and
+0.72–0.79 on the style signal. Both are above AI_FLOOR, so the agreement rule
+never fired, and the combined scores (0.762–0.785) landed above AI_THRESHOLD.
+
+Broken attacks — evasions (EV01, EV02, EV05, EV06, EV07)
+Unedited GPT-4o text scores 0.79–0.90 on the model signal. Every evasion that
+got through pulled at least one signal well below that, so even the plain
+average (0.357–0.582) fell under AI_THRESHOLD; the agreement rule would have
+held them in "unsure" anyway, since each has a signal below AI_FLOOR. They
+split into three mechanisms:
+
+- Signal one (EV01, typos): typos make the next word hard for GPT-2 to
+  predict, so the model signal fell to 0.164. Signal two scored the same text
+  1.0, so the attack worked through the model signal, not the word variety it
+  was aimed at.
+- Signal two, with signal one following (EV02 broken-up sentences, EV06 one
+  very long and one very short sentence, EV07 punctuation padding): these
+  change the shape without changing the substance, which is the blind spot
+  named for the style signal. Style fell to 0.377–0.492, and the reshaping also
+  dropped the model signal just under 0.6 (0.573–0.594).
+- Both signals (EV05, heavy human editing): real rewording lowers
+  predictability and evens out the shape, so both fell (0.321 and 0.392). This
+  is the one evasion I would not call an attack: after that much editing the
+  text is partly human-written.
+
+The pattern: one cheap edit that moves one signal is enough, because the rule
+asks for both signals to agree before it says "ai". That rule was chosen to
+protect human writers, and its price is that an attacker only has to break one
+signal.
+
+Broken after the improvement (EV03, EV09)
+Stage: thresholds. EV03 (pasted quotation, 0.663) and EV09 (human opening
+bolted onto AI text, 0.709) had both signals above AI_FLOOR and were caught at
+AI_THRESHOLD 0.65. Raising the threshold to 0.75 put both inside the unsure
+band. This is the cost of the improvement, not a new weakness in the signals.
+
 
 
 ---
@@ -1089,15 +1129,101 @@ of two more evasions, and it made no criterion pass.
 
 ## What's Still Broken
 
-<!-- For each attack still getting through and each criterion still missed:
-     what you'd do, and why you stopped. -->
+### Attacks that still get through
+
+**FP02–FP05 — false positives, still "ai" at 0.762–0.785.**
+These are the rows I most want to fix: real human writing, both signals
+agreeing, and a confident "ai" label. The AI threshold is now 0.75 and they sit
+above it, so no threshold that still lets real AI text reach "ai" can clear
+them. What I'd do: recalibrate the style signal's anchors on ordinary human
+prose, because the style signal scores human writing *higher* than GPT-4o text
+(0.674 vs 0.655). Why I stopped: that is a change to `stylometry.py`'s anchors,
+not a threshold, and it needs a larger human sample than the four pieces I
+calibrated on. Doing it on the same texts I measure on would be overfitting, and
+I would rather report the miss than tune it away.
+
+**FP03 — my worst outcome, still "ai" at 0.785.**
+A non-native speaker's careful writing, both signals above 0.76. Same fix, same
+reason for stopping. This is the writer the README is about, and the honest
+statement is that the current signals cannot separate her from GPT-4o output.
+
+**My three plain L2 pieces — still "ai" at 0.826–0.848.**
+Criterion 1 went from 7/10 to 5/10, and the three pieces that remain are exactly
+the plain, second-language-style writers. They score higher than all five
+GPT-4o texts (0.633–0.809), so the problem is upstream of the threshold. What
+I'd do: a model signal calibrated on plain human prose, or a third signal that
+reads meaning rather than shape. Why I stopped: both are new signal work, beyond
+one improvement.
+
+**EV03 and EV09 — evasions that now get through.**
+Widening the unsure band moved EV03 (a pasted quotation, 0.663) and EV09 (a
+human opening bolted onto AI text, 0.709) from "ai" to "unsure". This is the
+direct cost of the threshold change, and I am reporting it rather than hiding
+it: evasion went from 5 broke to 7. What I'd do: lower the threshold back for
+these two families only — but that reintroduces the false positives, so there
+is no free fix. Why I stopped: the trade is the one my criteria chose, and
+moving the threshold back would undo the only improvement I made.
+
+**EV04, EV10 — evasions still caught, but for the wrong reason.**
+They stay "ai" because the edits did not move the signals (EV04 style 1.0,
+EV10 model 0.979), not because the rule saw through them. That is a held row I would not
+count as a win. What I'd do: nothing — a rule cannot catch what the signals do
+not see.
+
+**EV01, EV02, EV05, EV06, EV07 — evasions that got through before and after.**
+Each pulled at least one signal well below AI_FLOOR (typos dropped the model
+signal to 0.164; reshaping dropped style to 0.377–0.492), so "ai" was never
+possible: the rule needs both signals to agree. What I'd do: a third signal
+that typos and reshaping don't move, or route large disagreement between the
+two signals to human review instead of answering "unsure". Why I stopped:
+loosening the agreement rule would bring back the false positives, which my
+criteria rank as the worse failure. EV05 is partly human-edited text, and I
+would not call it an attack at all.
+
+**RQ10 and RQ11 — never reached validation.**
+Requests with no usable `creator_id` share one per-IP rate-limit bucket, so
+earlier malformed requests used it up and these two got 429 before their body
+was checked. What I'd do: give the fallback bucket its own higher limit, or
+reject unparseable bodies before the limiter counts them. Why I stopped: they
+were held either way and nothing crashed; this is a gap in what the run
+tested, not a failure of the service.
+
+### Criteria still missed
+
+**Criterion 1 (≤ 1 of 10 "ai") — 5 of 10, still missed.**
+The threshold change halved it but did not clear it. The remaining five are the
+three plain L2 pieces and two ordinary pieces at 0.813 and 0.842. No threshold
+that still leaves "ai" reachable for real AI text can clear them. I stopped
+because the fix is in signal one's calibration, not in `config.py`.
+
+**Criterion 2 (spread ≥ 0.25, no overlap) — gap 0.045, still missed.**
+The two groups overlap: the lowest AI text is 0.633 and the highest human text
+is 0.733. Raising the threshold barely changed the scores: the only one that
+moved was an AI text whose capped score rose with the cap (0.640 → 0.693), so
+the gap went from 0.034 to 0.045. I stopped because no threshold can separate two distributions that
+overlap — this needs signals that score human and AI text differently in the
+first place.
+
+**Criterion 3 (all three labels reachable) — still missed.**
+No human text in the run reached "human". The lowest combined human score is
+0.426, and `HUMAN_THRESHOLD` is 0.35. I could raise the threshold to 0.45, but
+that would make EV05 (heavily edited AI at 0.357) confidently "human" — a new
+broken attack, not a fix. I stopped because the right fix is a style signal
+whose human anchors are ordinary writing rather than *Walden*, and that is
+Milestone 5 work.
+
 
 
 
 **The trade I'd make if this ran for real:**
 
-<!-- Two sentences. Fewer wrong accusations means more AI text getting through.
-     Say which way you'd go and WHO PAYS FOR IT. -->
+I would keep the wider unsure band and accept that more AI text gets through as
+"unsure", because the person who pays for a wrong accusation is a real writer
+and the person who pays for a missed detection is the site. But I would not
+ship it until signal two is recalibrated on ordinary human prose: right now the
+style signal scores human writing higher than machine writing, so every
+threshold change is fighting the signal instead of using it, and the writer who
+pays for that is the plain, second-language writer this README opened with.
 
 
 
