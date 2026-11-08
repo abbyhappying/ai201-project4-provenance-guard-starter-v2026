@@ -521,3 +521,5 @@
 {"timestamp": "2026-11-07T21:38:29+00:00", "creator_id": "unknown", "event": "rejected", "status": "rejected", "reason": "rate_limited", "limit": "5 per 1 minute"}
 {"timestamp": "2026-11-07T21:38:29+00:00", "creator_id": "eval_bad_null", "event": "rejected", "status": "rejected", "reason": "rate_limited", "limit": "5 per 1 minute"}
 {"timestamp": "2026-11-07T21:38:29+00:00", "creator_id": "eval_bad_number", "event": "rejected", "status": "rejected", "reason": "rate_limited", "limit": "5 per 1 minute"}
+{"timestamp": "2026-11-08T15:49:09+00:00", "content_id": "362d52bb-1748-4240-8252-800c8169ae42", "creator_id": "test-user-1", "guess": "unsure", "model_score": 0.6586, "style_score": 0.5524, "combined_score": 0.6055, "label": "We're not sure whether this was written by a person or an AI. Our checks didn't give a clear answer, so we're not making a call either way.", "status": "decided"}
+{"timestamp": "2026-11-08T15:51:15+00:00", "content_id": "362d52bb-1748-4240-8252-800c8169ae42", "creator_id": "test-user-1", "event": "appeal", "status": "under_review", "reasoning": "I wrote this myself."}

@@ -855,19 +855,56 @@ Criterion 1, trial 1, from `results/run_2026-11-07_1335_before.md`, produced by
 
 **Diagnoses**
 
-<!-- For each miss AND each broken attack: the stage and the mechanism.
+### Verdicts
 
-     Your service has five stages: the route, signal one, signal two, the
-     combining rule, and the label mapping.
+| Criterion | Target | Verdict | Evidence |
+|---|---|---|---|
+| 1. my own writing not flagged as AI | ≤ 1/10 | **MISSED** | 7 of 10 labelled "ai" in all three trials |
+| 2. score spread | AI mean − human mean ≥ 0.25 | **MISSED** | 0.724 vs 0.690, gap ≈ 0.03 |
+| 3. all three labels reachable | 3/3 | **MISSED** | only "ai" and "unsure"; no "human" in any trial |
+| 4. appeal always changes status | 5/5 | 1/1 (by hand) | **MET**|
+| 5. bad input returns 400, never 500 | 7/7 | **MET** | 7 of 7 returned 400 in all three trials |
 
-     Not a diagnosis:  "The evasion attacks got through."
-     A diagnosis:      "Four evasion inputs got through. All four had typos
-                        added to AI-generated text. My second signal measures
-                        word variety, and typos raise word variety — so it read
-                        them as more human. My combining rule weights that
-                        signal at 0.6, so it dragged the whole score down."
 
-     Look for a pattern. Five failures on one signal is one problem, not five. -->
+
+Miss 1 — criterion 1 (7 of 10 of my own pieces labelled "ai")
+Stage: signal one, with signal two agreeing. Mechanism: the model signal
+scores my plain, second-language-style writing between 0.65 and 0.86, because
+short common sentences are easy for GPT-2 to predict. Signal two agrees, scoring
+the same pieces 0.55–0.92, because evenly sized sentences and a narrow
+vocabulary look "regular". Both signals are above AI_FLOOR (0.6), so the
+agreement rule in combine_signals never fires and the combined score lands at
+0.65–0.85 — well above AI_THRESHOLD (0.65). This is the exact false-positive
+case my design note warned about: plain writing is the model signal's blind
+spot, formal/even structure is the style signal's blind spot, and my test pieces
+hit both at once.
+
+Miss 2 — criterion 2 (spread ≈ 0.034, not 0.25)
+Stage: combining rule plus thresholds, caused by both signals. Mechanism:
+the AI group's mean combined score is 0.724 and the human group's is 0.690 — a
+gap of about 0.034, an order of magnitude short of 0.25 — and the groups overlap
+badly (the human water-bottle text scores 0.7245, higher than the AI water-bottle
+text at 0.6328). The cause is the same as Miss 1: my human texts score high on
+both signals, so no rule that only averages or gates these two numbers can pull
+them apart. The rule is not faulty; its inputs are not separated.
+
+Miss 3 — criterion 3 (no "human" verdict)
+Stage: label mapping plus thresholds, rooted in signal one. Mechanism:
+score_to_label maps score <= 0.35 to "human", but the lowest combined score
+any human text reached was 0.426, and the model signal alone never went below
+0.42 on real writing. The "human" band at 0.00–0.35 is therefore unreachable in
+practice: the model signal's floor on human prose sits above the band's ceiling.
+This is a threshold/calibration problem, not a bug — but as written the criterion
+cannot pass.
+
+Pattern across the misses
+Three of the misses and the false-positive attacks are one problem, not four:
+the model signal scores ordinary human writing too high, and the style signal
+scores even, formal human writing too high. Because both signals lean AI on
+human text, the combining rule has nothing to separate, the "human" band is
+unreachable, and the spread collapses. The highest-leverage fix is signal
+one's calibration on human prose (or a wider unsure band and a higher
+HUMAN_THRESHOLD), not tuning combine_signals, which is behaving as designed.
 
 
 
